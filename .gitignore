@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+lib/
+lib64/
+bin/
+include/
+share/
+*.egg-info/
+.pytest_cache/
+.coverage
+
+# Specific to this project
+face_embeddings.pkl
+attendance.csv
+attendance_proofs/
