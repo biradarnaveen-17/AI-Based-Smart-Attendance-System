@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Student Attendance List</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+<style>
+/* General Styling /
+body {
+font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+margin: 0;
+padding: 20px;
+background-color: #282c34;
+color: #abb2bf;
+display: flex;
+flex-direction: column;
+align-items: center;
+min-height: 100vh;
+}
+.container {
+background-color: #3a404b;
+border-radius: 8px;
+box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+padding: 30px;
+width: 90%;
+max-width: 600px;
+margin-top: 20px;
+box-sizing: border-box;
+}
+h1 {
+color: #61afef;
+text-align: center;
+margin-bottom: 25px;
+font-size: 2em;
+}
+/ Search Bar Styling /
+.search-bar {
+margin-bottom: 20px;
+display: flex;
+align-items: center;
+}
+.search-bar input {
+flex-grow: 1;
+padding: 10px 15px;
+border: 1px solid #5c6370;
+border-radius: 5px;
+background-color: #2f343d;
+color: #abb2bf;
+font-size: 1em;
+outline: none;
+}
+/ Student List Items /
+.student-list {
+max-height: 500px;
+overflow-y: auto;
+padding-right: 10px;
+}
+.student-item {
+display: flex;
+align-items: center;
+padding: 15px;
+margin-bottom: 10px;
+background-color: #2f343d;
+border-radius: 6px;
+border: 1px solid #4a515f;
+}
+.student-avatar {
+width: 40px;
+height: 40px;
+border-radius: 50%;
+margin-right: 15px;
+display: flex;
+align-items: center;
+justify-content: center;
+font-size: 1.2em;
+font-weight: bold;
+color: #FFFFFF;
+background-color: #61afef;
+}
+.student-info {
+flex-grow: 1;
+text-align: left;
+}
+.student-info h3 {
+margin: 0;
+color: #e06c75;
+font-size: 1.2em;
+}
+.student-info p {
+margin: 3px 0 0;
+color: #abb2bf;
+font-size: 0.9em;
+}
+.status-icon {
+color: #98c379; / Green for Present */
+font-size: 1.5em;
+margin-left: 20px;
+}
+.no-students {
+text-align: center;
+color: #abb2bf;
+padding: 30px;
+font-size: 1.1em;
+}
+</style>
+</head>
+<body>
+<h1>TODAY'S ATTENDANCE LIST</h1>
+
+<div class="container">
+    {% if error %}
+        <p class="no-students" style="color: #e06c75;">{{ error }}</p>
+    {% endif %}
+
+    <div class="search-bar">
+        <i class="fas fa-search" style="font-size: 1.2em;"></i>
+        <input type="text" id="searchInput" onkeyup="filterStudents()" placeholder="Filter by student name...">
+    </div>
+
+    <div class="student-list" id="studentList">
+        {% if students %}
+            {% for student in students %}
+            <div class="student-item">
+                <!-- Display first letter of name as avatar -->
+                <div class="student-avatar">
+                    {{ student.name[0] }}
+                </div>
+                <div class="student-info">
+                    <h3>{{ student.name }}</h3>
+                    <p>{{ student.id }}</p>
+                    <p>Time: {{ student.timestamp.split(' ')[1] }}</p>
+                </div>
+                <i class="fas fa-check-circle status-icon" title="Present"></i>
+            </div>
+            {% endfor %}
+        {% else %}
+            <p class="no-students">No students marked present yet for today.</p>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+    function filterStudents() {
+        var input, filter, studentList, studentItems, studentName, i, txtValueName;
+        input = document.getElementById('searchInput');
+        filter = input.value.toUpperCase();
+        studentList = document.getElementById('studentList');
+        studentItems = studentList.getElementsByClassName('student-item');
+
+        for (i = 0; i < studentItems.length; i++) {
+            // Get the name text from the h3 tag
+            studentName = studentItems[i].getElementsByTagName('h3')[0];
+            
+            if (studentName) {
+                txtValueName = studentName.textContent || studentName.innerText;
+                if (txtValueName.toUpperCase().indexOf(filter) > -1) {
+                    studentItems[i].style.display = "";
+                } else {
+                    studentItems[i].style.display = "none";
+                }
+            }
+        }
+    }
+</script>
+
+
+</body>
+</html>
