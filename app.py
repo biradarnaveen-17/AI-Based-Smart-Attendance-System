@@ -15,20 +15,29 @@ import queue
 import shutil 
 import json 
 import webbrowser 
-import mysql.connector
-from mysql.connector import Error
-import xml.etree.ElementTree as ET
-from xml.dom import minidom
+import sqlite3
+
+# --- NEW: Excel/Pandas Imports ---
+try:
+    import pandas as pd
+except ImportError:
+    messagebox.showerror("Missing Libraries", "Required library 'pandas' not found.\n\nPlease run: pip install pandas")
+    exit()
+
+try:
+    import openpyxl
+except ImportError:
+    messagebox.showerror("Missing Libraries", "Required library 'openpyxl' not found.\n\nPlease run: pip install openpyxl")
+    exit()
+
 
 # --- Configuration ---
 RECOGNITION_THRESHOLD = 0.55 
 PROCESS_EVERY_N_FRAMES = 5 
 
 # --- DB Configuration ---
-DB_HOST = 'localhost'
-DB_USER = 'root'
-DB_PASSWORD = '' # Your XAMPP password, if you have one
-DB_NAME = 'ai_attendance_system' 
+DB_NAME = 'attendance.db' 
+
 
 class VideoProcessor(threading.Thread):
     def __init__(self, video_capture, known_face_encodings, known_face_names, recognition_threshold, results_queue):
@@ -50,6 +59,11 @@ class VideoProcessor(threading.Thread):
     def run(self):
         while self.running:
             start_time = time.time()
+            
+            if not self.video_capture or not self.video_capture.isOpened():
+                self.running = False
+                break
+                
             ret, frame = self.video_capture.read()
             if not ret:
                 print("VideoProcessor: Failed to grab frame.")
@@ -65,9 +79,7 @@ class VideoProcessor(threading.Thread):
             if self.frame_counter % PROCESS_EVERY_N_FRAMES == 0:
                 is_fresh_data = True 
                 
-                # --- Multi-face detection at 0.5x size ---
                 small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
-                
                 rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
 
                 face_locations = face_recognition.face_locations(rgb_small_frame)
@@ -91,14 +103,13 @@ class VideoProcessor(threading.Thread):
                             confidence = (1 - best_match_distance / self.recognition_threshold) * 100
                             if confidence < 0: confidence = 0
 
-                    # Rescale locations back to the full frame size (fx=0.5 means multiply by 2)
                     top, right, bottom, left = face_locations[i]
                     scaled_top, scaled_right, scaled_bottom, scaled_left = top * 2, right * 2, bottom * 2, left * 2
 
                     recognized_info.append({
                         "name": name,
                         "confidence": confidence,
-                        "location": (scaled_top, scaled_right, scaled_bottom, scaled_left)
+                        "location": (scaled_top, scaled_right, scaled_bottom, scaled_left) 
                     })
                 
                 recognized_count = len(current_frame_recognized_students)
@@ -108,7 +119,7 @@ class VideoProcessor(threading.Thread):
             
             try:
                 self.results_queue.put_nowait({
-                    "frame": frame, # Full size frame
+                    "frame": frame, 
                     "recognized_info": self.last_known_info, 
                     "recognized_count": self.last_known_count,
                     "is_fresh_data": is_fresh_data 
@@ -133,13 +144,15 @@ class AttendanceSystemApp:
         
         self.training_results_queue = queue.Queue(maxsize=1)
 
+        # --- DB INTEGRATION (SQLite) ---
         self.db_conn = self.connect_to_database()
         if self.db_conn:
             self.setup_database()
         else:
-            messagebox.showerror("Database Error", "Failed to connect to MySQL database. Please ensure XAMPP is running.")
+            messagebox.showerror("Database Error", "Failed to create local SQLite database.")
             self.root.destroy()
             return
+        # --- END DB INTEGRATION ---
         
         self.known_face_encodings = []
         self.known_face_names = []
@@ -180,7 +193,7 @@ class AttendanceSystemApp:
         if self_load_encodings_called:
             self.update_attendance_display(show_popup=False) 
         
-        # self.reg_capture = None # <-- CHANGE 1: This line is removed.
+        self.reg_capture = None
         self.reg_window = None
         self.reg_video_label = None
         self.reg_cam_running = False
@@ -188,47 +201,43 @@ class AttendanceSystemApp:
         self.snapshot_count = 0
 
     def connect_to_database(self):
+        """Connects to the SQLite database file."""
         try:
-            conn = mysql.connector.connect(
-                host=DB_HOST,
-                user=DB_USER,
-                password=DB_PASSWORD
-            )
-            cursor = conn.cursor()
-            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {DB_NAME}")
-            conn.database = DB_NAME
+            conn = sqlite3.connect(DB_NAME)
             print(f"Connected to database '{DB_NAME}'")
             return conn
-        except Error as e:
-            print(f"Error connecting to MySQL: {e}")
+        except sqlite3.Error as e:
+            print(f"Error connecting to SQLite: {e}")
             return None
 
     def setup_database(self):
+        """Creates the attendance table if it doesn't exist."""
         try:
             cursor = self.db_conn.cursor()
+            # Changed SQL syntax for SQLite
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS attendance (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                name VARCHAR(100) NOT NULL,
-                date DATE NOT NULL,
-                time TIME NOT NULL,
-                confidence VARCHAR(10),
-                UNIQUE KEY unique_entry (name, date, time)
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                date TEXT NOT NULL,
+                time TEXT NOT NULL,
+                confidence TEXT,
+                UNIQUE(name, date, time)
             )
             """)
+            self.db_conn.commit()
             print("Attendance table is ready.")
-        except Error as e:
+        except sqlite3.Error as e:
             messagebox.showerror("Database Error", f"Failed to create table: {e}")
 
     def load_todays_attendance(self):
         today_str = datetime.now().strftime("%Y-%m-%d")
         print(f"Loading students already marked for {today_str}...")
         try:
-            if not self.db_conn.is_connected():
-                self.db_conn = self.connect_to_database()
-                
+            # No need to check connection, sqlite3 auto-handles
             cursor = self.db_conn.cursor()
-            query = "SELECT DISTINCT name FROM attendance WHERE date = %s"
+            # Changed SQL placeholder from %s to ?
+            query = "SELECT DISTINCT name FROM attendance WHERE date = ?"
             cursor.execute(query, (today_str,))
             rows = cursor.fetchall()
             cursor.close()
@@ -238,7 +247,7 @@ class AttendanceSystemApp:
             
             print(f"Loaded {len(self.students_marked_today)} students: {self.students_marked_today}")
                 
-        except Error as e:
+        except sqlite3.Error as e:
              print(f"Error loading today's attendance: {e}")
 
     def load_encodings(self):
@@ -277,14 +286,11 @@ class AttendanceSystemApp:
         live_camera_frame = tk.Frame(self.notebook, bg="lightgray")
         self.notebook.add(live_camera_frame, text="Live Camera")
 
-        # Use grid for live_camera_frame content
-        live_camera_frame.grid_rowconfigure(0, weight=0) # For stats_frame
-        live_camera_frame.grid_rowconfigure(1, weight=1) # For video_label
-        live_camera_frame.grid_rowconfigure(2, weight=0) # For video_control_frame
+        live_camera_frame.grid_rowconfigure(1, weight=1) 
         live_camera_frame.grid_columnconfigure(0, weight=1)
 
         stats_frame = tk.Frame(live_camera_frame, bg="lightgray")
-        stats_frame.grid(row=0, column=0, sticky="ew", pady=5, padx=10) # Placed in grid
+        stats_frame.grid(row=0, column=0, sticky="ew", pady=5, padx=10) 
 
         self.recognized_count_label = tk.Label(stats_frame, text="Recognized: 0", font=("Arial", 12), bg="lightgray")
         self.recognized_count_label.pack(side="left")
@@ -293,26 +299,27 @@ class AttendanceSystemApp:
         self.fps_label.pack(side="right")
 
         self.video_label = tk.Label(live_camera_frame, bg="black")
-        self.video_label.grid(row=1, column=0, sticky="nsew", padx=10, pady=5) # Placed in grid and configured to expand
+        self.video_label.grid(row=1, column=0, sticky="nsew", padx=10, pady=5) 
 
-        # Frame for buttons below the video feed, inside live_camera_frame
         video_control_frame = tk.Frame(live_camera_frame, bg="lightgray")
-        video_control_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5) # Placed in grid
+        video_control_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5) 
 
         btn_register = tk.Button(video_control_frame, text="+ Register Student", command=self.register_student, bg="#61AFEF", fg="white", font=("Arial", 10, "bold"))
-        btn_register.pack(side="left", padx=5) # Reduced padx for more buttons
+        btn_register.pack(side="left", padx=5) 
         btn_manual = tk.Button(video_control_frame, text="Manual Mark", command=self.manual_mark, bg="#E5C07B", fg="white", font=("Arial", 10, "bold"))
         btn_manual.pack(side="left", padx=5)
         btn_refresh = tk.Button(video_control_frame, text="Refresh", command=lambda: self.update_attendance_display(show_popup=True), bg="#98C379", fg="white", font=("Arial", 10, "bold"))
         btn_refresh.pack(side="left", padx=5)
         
-        btn_export = tk.Button(video_control_frame, text="Export (XML)", command=self.export_to_xml, bg="#C678DD", fg="white", font=("Arial", 10, "bold"))
+        # --- MODIFIED: Button for Excel ---
+        btn_export = tk.Button(video_control_frame, text="Export (Excel)", command=self.export_to_excel, bg="#C678DD", fg="white", font=("Arial", 10, "bold"))
         btn_export.pack(side="left", padx=5)
         
         btn_web = tk.Button(video_control_frame, text="View Daily List (Web)", command=self.open_web_status, bg="#E06C75", fg="white", font=("Arial", 10, "bold"))
-        btn_web.pack(side="right", padx=5) # Keep this on the right
+        btn_web.pack(side="right", padx=5) 
 
         attendance_records_frame = tk.Frame(self.notebook, bg="lightgray")
+        # ... (rest of create_widgets) ...
         self.notebook.add(attendance_records_frame, text="Attendance Records")
 
         self.attendance_tree = ttk.Treeview(attendance_records_frame, columns=("Name", "Date", "Time", "Confidence"), show="headings")
@@ -329,9 +336,6 @@ class AttendanceSystemApp:
         tree_scrollbar_y = ttk.Scrollbar(attendance_records_frame, orient="vertical", command=self.attendance_tree.yview)
         tree_scrollbar_y.pack(side="right", fill="y")
         self.attendance_tree.config(yscrollcommand=tree_scrollbar_y.set)
-
-        # Removed the button_frame that was at self.root level and packing side="bottom"
-        # All buttons are now within video_control_frame inside live_camera_frame
 
     def open_web_status(self):
         webbrowser.open_new_tab("http://127.0.0.1:5001/attendance")
@@ -367,42 +371,43 @@ class AttendanceSystemApp:
             self.update_live_status_threaded(name)
 
     def save_attendance_to_db(self, name, date_str, time_str, conf_str):
-        """Saves a single attendance record to the MySQL database."""
+        """Saves a single attendance record to the SQLite database."""
         try:
-            if not self.db_conn.is_connected():
-                self.db_conn = self.connect_to_database()
-            
-            cursor = self.db_conn.cursor()
-            query = "INSERT INTO attendance (name, date, time, confidence) VALUES (%s, %s, %s, %s)"
+            # Note: For threading, it's safer to create a new connection
+            # for each write operation. SQLite can be sensitive.
+            conn = sqlite3.connect(DB_NAME)
+            cursor = conn.cursor()
+            # Changed SQL placeholder from %s to ?
+            query = "INSERT INTO attendance (name, date, time, confidence) VALUES (?, ?, ?, ?)"
             values = (name, date_str, time_str, conf_str)
             cursor.execute(query, values)
-            self.db_conn.commit()
+            conn.commit()
             cursor.close()
-        except Error as e:
+            conn.close()
+        except sqlite3.Error as e:
             print(f"Error saving attendance to DB: {e}")
-            if e.errno == 2006: 
-                print("Reconnecting to database...")
-                self.db_conn = self.connect_to_database()
 
     def load_attendance_from_db(self):
         """Loads all attendance records from the database for the GUI list."""
         self.attendance_records_data = []
         try:
-            if not self.db_conn.is_connected():
-                self.db_conn = self.connect_to_database()
-                
             cursor = self.db_conn.cursor()
             cursor.execute("SELECT name, date, time, confidence FROM attendance ORDER BY date DESC, time DESC")
             rows = cursor.fetchall()
             cursor.close()
             
             for row in rows:
-                name, date, time_obj, confidence = row
-                date_str = date.strftime("%Y-%m-%d")
-                time_str = (datetime.min + time_obj).strftime("%I:%M:%S %p") 
-                self.attendance_records_data.append((name, date_str, time_str, confidence))
+                name, date_str, time_str, confidence = row
+                # Convert time string (HH:MM:SS) to display format
+                try:
+                    time_obj = datetime.strptime(time_str, "%H:%M:%S").time()
+                    time_display_str = time_obj.strftime("%I:%M:%S %p")
+                except ValueError:
+                    time_display_str = time_str # Fallback
                 
-        except Error as e:
+                self.attendance_records_data.append((name, date_str, time_display_str, confidence))
+                
+        except sqlite3.Error as e:
              print(f"Error loading attendance from DB: {e}")
 
     def update_attendance_display(self, show_popup=False):
@@ -419,7 +424,7 @@ class AttendanceSystemApp:
     def update_video_feed(self):
         try:
             results = self.processing_results_queue.get_nowait()
-            frame = results["frame"] # Full-size BGR frame
+            frame = results["frame"] 
             recognized_info = results["recognized_info"]
             recognized_count = results["recognized_count"]
             is_fresh_data = results["is_fresh_data"] 
@@ -436,9 +441,9 @@ class AttendanceSystemApp:
                 label = f"{name}"
                 if confidence is not None:
                     label += f" ({confidence:.1f}%)"
-                cv2.rectangle(display_frame, (left, bottom - 20), (right, bottom), color, cv2.FILLED)
+                cv2.rectangle(display_frame, (left, bottom - 35), (right, bottom), color, cv2.FILLED)
                 font = cv2.FONT_HERSHEY_DUPLEX
-                cv2.putText(display_frame, label, (left + 6, bottom - 6), font, 0.6, (255, 255, 255), 1)
+                cv2.putText(display_frame, label, (left + 6, bottom - 6), font, 0.8, (255, 255, 255), 1)
                 
                 if is_fresh_data:
                     self.mark_attendance(name, confidence)
@@ -566,13 +571,22 @@ class AttendanceSystemApp:
         self.reg_window.transient(self.root)
         self.reg_window.grab_set()
         
+        print("Stopping main video processor...")
         self.video_processor.stop() 
         self.video_processor.join(timeout=1.0) 
-        if self.video_processor.is_alive():
-            print("Warning: Main video processor still alive during registration.")
         
-        # <-- CHANGE 2: This block that created self.reg_capture is removed.
-        # We will now use self.video_capture, which is already open.
+        if self.video_capture.isOpened():
+            self.video_capture.release()
+            print("Main video capture released for registration.")
+        
+        print("Opening registration camera...")
+        self.reg_capture = cv2.VideoCapture(0)
+        if not self.reg_capture.isOpened():
+            messagebox.showerror("Camera Error", "Could not open camera. Please ensure it is not in use by another app.", parent=self.root)
+            self.reg_window.destroy()
+            self.reg_capture = None
+            self.start_main_video_processor()
+            return
             
         self.reg_video_label = tk.Label(self.reg_window, bg="black")
         self.reg_video_label.pack()
@@ -595,15 +609,16 @@ class AttendanceSystemApp:
     def update_reg_feed(self):
         if not self.reg_cam_running:
             return
-            
-        # <-- CHANGE 3: Using self.video_capture instead of self.reg_capture
-        ret, frame = self.video_capture.read()
         
+        if not self.reg_capture or not self.reg_capture.isOpened():
+             print("Registration capture is not open.")
+             self.close_registration_camera() 
+             return
+
+        ret, frame = self.reg_capture.read()
         if ret:
             self.current_reg_frame = frame 
-            
             display_frame = frame.copy()
-
             rgb_frame_small = cv2.cvtColor(cv2.resize(frame, (0, 0), fx=0.5, fy=0.5), cv2.COLOR_BGR2RGB)
             face_locations = face_recognition.face_locations(rgb_frame_small)
             
@@ -621,8 +636,7 @@ class AttendanceSystemApp:
             self.reg_video_label.config(image=img_tk)
             self.reg_window.after(10, self.update_reg_feed)
         else:
-            # Updated print statement for clarity
-            print("Failed to grab frame from self.video_capture in reg_feed")
+            print("Failed to grab frame from reg_capture")
             self.reg_window.after(10, self.update_reg_feed)
 
     def save_snapshot(self, student_path):
@@ -653,22 +667,35 @@ class AttendanceSystemApp:
     def close_registration_camera(self, student_name=None, student_path=None):
         self.reg_cam_running = False
         
-        # <-- CHANGE 4: This block that released self.reg_capture is removed.
-        # We no longer release the camera here, as the main processor will take over.
+        if self.reg_capture and self.reg_capture.isOpened():
+            self.reg_capture.release()
+            print("Registration camera released.")
+        self.reg_capture = None
         
         if self.reg_window:
             self.reg_window.grab_release()
             self.reg_window.destroy()
             self.reg_window = None
             
-        # We restart the main video processor, which will reuse self.video_capture
+        self.start_main_video_processor()
+        
+        if self.snapshot_count > 0 and student_name and student_path:
+            self.process_and_update_encodings_in_memory(student_name, student_path, self.snapshot_count)
+
+    def start_main_video_processor(self):
+        """Helper function to safely start the main video processor."""
+        if not self.video_capture.isOpened():
+            self.video_capture = cv2.VideoCapture(0)
+            print("Main video capture re-initialized.")
+
+        if hasattr(self, 'video_processor') and self.video_processor.is_alive():
+             print("Main video processor is already running.")
+             return
+
         self.video_processor = VideoProcessor(self.video_capture, self.known_face_encodings, self.known_face_names, RECOGNITION_THRESHOLD, self.processing_results_queue)
         self.video_processor.daemon = True
         self.video_processor.start()
         print("Main video processor restarted.")
-        
-        if self.snapshot_count > 0 and student_name and student_path:
-            self.process_and_update_encodings_in_memory(student_name, student_path, self.snapshot_count)
 
     def process_and_update_encodings_in_memory(self, student_name, student_path, photo_count):
         print(f"Starting background encoding for {student_name}...")
@@ -689,7 +716,6 @@ class AttendanceSystemApp:
         """THIS FUNCTION RUNS ON A BACKGROUND THREAD."""
         new_encodings_count = 0
         try:
-            # Re-read encodings to avoid duplicates if this student was partially processed before
             current_known_encodings = []
             current_known_names = []
             try:
@@ -698,9 +724,8 @@ class AttendanceSystemApp:
                     current_known_encodings = data['encodings']
                     current_known_names = data['names']
             except FileNotFoundError:
-                pass # No encodings yet, start fresh
+                pass 
             
-            # Filter out existing encodings for this student to re-encode (useful if photos are changed)
             temp_encodings = []
             temp_names = []
             for i, name in enumerate(current_known_names):
@@ -708,7 +733,6 @@ class AttendanceSystemApp:
                     temp_encodings.append(current_known_encodings[i])
                     temp_names.append(current_known_names[i])
 
-            # Now add new encodings for the student
             for image_name in os.listdir(student_path):
                 if image_name.endswith((".jpg", ".png", ".jpeg")):
                     image_path = os.path.join(student_path, image_name)
@@ -728,11 +752,10 @@ class AttendanceSystemApp:
                     except Exception as e:
                         print(f"Error processing {image_path}: {e}")
             
-            # Save the updated list back to the pkl file
             with open('encodings.pkl', 'wb') as f:
                 pickle.dump({'encodings': temp_encodings, 'names': temp_names}, f)
             
-            self.training_results_queue.put({"student_name": student_name, "count": new_encodings_count, "path": student_path})
+            self.training_results_queue.put({"student_name": student_name, "count": new_encodings_count})
             
         except Exception as e:
             self.training_results_queue.put({"student_name": student_name, "count": 0, "error": str(e)})
@@ -744,20 +767,22 @@ class AttendanceSystemApp:
             
             self.root.config(cursor="")
             if hasattr(self, 'processing_popup') and self.processing_popup:
-                self.processing_popup.grab_release()
-                self.processing_popup.destroy()
-                self.processing_popup = None
+                try:
+                    self.processing_popup.grab_release()
+                    self.processing_popup.destroy()
+                    self.processing_popup = None
+                except tk.TclError:
+                    pass # Window already destroyed
 
             if "error" in result:
                 messagebox.showerror("Encoding Error", f"Failed to encode faces for {result['student_name']}: {result['error']}", parent=self.root)
                 return
 
             student_name = result["student_name"]
-            student_path = result["path"]
             new_encodings_count = result["count"]
 
             if new_encodings_count > 0:
-                self.load_encodings() # Reload all encodings to ensure the video processor gets the most up-to-date list
+                self.load_encodings() # Reload all encodings
                 
                 messagebox.showinfo("Update Complete", 
                                     f"Added {new_encodings_count} new images for {student_name}.\nThey can be recognized immediately.",
@@ -770,14 +795,13 @@ class AttendanceSystemApp:
         
         self.root.after(1000, self.check_training_results)
     
-
     def manual_mark(self):
         manual_window = tk.Toplevel(self.root)
         manual_window.title("Manual Mark Attendance")
         manual_window.geometry("300x150")
         manual_window.transient(self.root)  
-        manual_window.grab_set()             
-        manual_window.focus_force()          
+        manual_window.grab_set()          
+        manual_window.focus_force()        
         tk.Label(manual_window, text="Enter Student's Name:", font=("Arial", 12)).pack(pady=10)
         name_entry = tk.Entry(manual_window, width=30, font=("Arial", 12))
         name_entry.pack(pady=5, padx=20)
@@ -789,6 +813,8 @@ class AttendanceSystemApp:
                 self.mark_attendance(student_name, confidence=None)
 
                 if not not_marked:
+                     # This logic adds a *visual* duplicate to the list if already marked
+                     # The core self.mark_attendance() prevents a DB duplicate
                      timestamp = datetime.now()
                      date_str = timestamp.strftime("%Y-%m-%d")
                      time_display_str = timestamp.strftime("%I:%M:%S %p")
@@ -802,81 +828,80 @@ class AttendanceSystemApp:
                 messagebox.showwarning("Input Error", "Please enter a student name.", parent=manual_window)
         tk.Button(manual_window, text="Mark Present", command=submit_manual_mark).pack(pady=10)
 
-    def export_to_xml(self):
-        """Exports today's unique attendance list to an XML file."""
-        print("Exporting to XML...")
-        
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        
+    # --- NEW: Excel Export Function ---
+    def export_to_excel(self):
+        """Exports all attendance records to an Excel file."""
+        print("Exporting to Excel...")
+
+        # 1. Get the save location
         filename = filedialog.asksaveasfilename(
             parent=self.root,
-            title="Save XML Export",
-            defaultextension=".xml",
-            filetypes=[("XML Files", "*.xml")]
+            title="Save Excel Export",
+            defaultextension=".xlsx",
+            filetypes=[("Excel Files", "*.xlsx")]
         )
         
         if not filename:
             print("Export cancelled.")
             return
-            
-        todays_students = []
+
+        # 2. Get all data from the database
+        all_records = []
         try:
-            if not self.db_conn.is_connected():
-                self.db_conn = self.connect_to_database()
-            
-            cursor = self.db_conn.cursor()
-            query = """
-            SELECT DISTINCT name, MIN(time) as first_seen
-            FROM attendance
-            WHERE date = %s
-            GROUP BY name
-            ORDER BY name
-            """
-            cursor.execute(query, (today_str,))
+            conn = self.connect_to_database() # Get a fresh connection
+            if not conn:
+                 messagebox.showerror("Database Error", "Could not connect to database for export.")
+                 return
+                 
+            cursor = conn.cursor()
+            cursor.execute("SELECT name, date, time, confidence FROM attendance ORDER BY date DESC, time DESC")
             rows = cursor.fetchall()
             cursor.close()
+            conn.close()
             
+            if not rows:
+                messagebox.showinfo("Export", "No attendance data found in the database.", parent=self.root)
+                return
+
+            # Format the data for Pandas
             for row in rows:
-                name, time_obj = row
-                todays_students.append({
-                    "name": name,
-                    "time": (datetime.min + time_obj).strftime("%I:%M:%S %p")
+                name, date_str, time_str, confidence = row
+                try:
+                    time_obj = datetime.strptime(time_str, "%H:%M:%S").time()
+                    time_display_str = time_obj.strftime("%I:%M:%S %p")
+                except ValueError:
+                    time_display_str = time_str # Fallback
+                
+                all_records.append({
+                    "Name": name,
+                    "Date": date_str,
+                    "Time": time_display_str,
+                    "Confidence": confidence
                 })
         
-        except Error as e:
-            messagebox.showerror("Database Error", f"Failed to fetch data for export: {e}")
+        except sqlite3.Error as e:
+            messagebox.showerror("Database Error", f"Failed to fetch data for export: {e}", parent=self.root)
             return
-            
-        if not todays_students:
-            messagebox.showinfo("Export", "No students have been marked present today.", parent=self.root)
-            return
-            
-        root_element = ET.Element("AttendanceList")
-        root_element.set("date", today_str)
-        
-        for student in todays_students:
-            student_element = ET.SubElement(root_element, "Student")
-            
-            name_element = ET.SubElement(student_element, "Name")
-            name_element.text = student["name"]
-            
-            time_element = ET.SubElement(student_element, "FirstSeen")
-            time_element.text = student["time"]
-            
-        try:
-            xml_string = ET.tostring(root_element, encoding='utf-8')
-            
-            dom = minidom.parseString(xml_string)
-            pretty_xml_string = dom.toprettyxml(indent="  ")
-            
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(pretty_xml_string)
-                
-            messagebox.showinfo("Export Successful", f"Successfully exported {len(todays_students)} students to:\n{filename}", parent=self.root)
-        
-        except Exception as e:
-            messagebox.showerror("Export Error", f"Failed to write XML file: {e}", parent=self.root)
 
+        # 3. Write to Excel using Pandas
+        try:
+            df = pd.DataFrame(all_records)
+            
+            # Make columns wider
+            with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Attendance')
+                worksheet = writer.sheets['Attendance']
+                worksheet.column_dimensions['A'].width = 25  # Name
+                worksheet.column_dimensions['B'].width = 12  # Date
+                worksheet.column_dimensions['C'].width = 15  # Time
+                worksheet.column_dimensions['D'].width = 12  # Confidence
+
+            messagebox.showinfo("Export Successful", f"Successfully exported {len(all_records)} records to:\n{filename}", parent=self.root)
+
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to write Excel file: {e}", parent=self.root)
+
+    # --- END of Excel Function ---
 
     def on_closing(self):
         print("Saving updated encodings to encodings.pkl...")
@@ -890,21 +915,17 @@ class AttendanceSystemApp:
         print("Closing application...")
         self.video_processor.stop()
         self.video_processor.join(timeout=2.0)
-        if self.video_processor.is_alive():
-            print("Warning: Main video processor did not terminate in time.")
         
         self.reg_cam_running = False
+        if self.reg_capture and self.reg_capture.isOpened():
+            self.reg_capture.release()
+            print("Registration camera released.")
         
-        # We also remove the check for self.reg_capture here, as it no longer exists.
-        
-        if self.reg_window:
-            self.reg_window.destroy()
-            
         if self.video_capture.isOpened():
             self.video_capture.release()
             print("Main video capture released.")
             
-        if self.db_conn and self.db_conn.is_connected():
+        if self.db_conn:
             self.db_conn.close()
             print("Database connection closed.")
         
