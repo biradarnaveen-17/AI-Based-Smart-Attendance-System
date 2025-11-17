@@ -2,11 +2,32 @@
 from flask import Flask, render_template, send_from_directory
 import pandas as pd
 import os
-from datetime import date
+from datetime import date, datetime # <--- THIS IS THE FIX
+import mysql.connector # Added for database
+from mysql.connector import Error
 
 app = Flask(__name__)
 
-# Register the attendance_proofs directory to serve static images
+# --- DB Configuration ---
+DB_HOST = 'localhost'
+DB_USER = 'root'
+DB_PASSWORD = '' # Your XAMPP password, if you have one
+DB_NAME = 'ai_attendance_system'
+
+def get_db_connection():
+    """Establishes a connection to the database."""
+    try:
+        conn = mysql.connector.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME
+        )
+        return conn
+    except Error as e:
+        print(f"Error connecting to MySQL: {e}")
+        return None
+
 @app.route('/attendance_proofs/<filename>')
 def serve_proof_image(filename):
     return send_from_directory('attendance_proofs', filename)
@@ -18,40 +39,43 @@ def home():
 @app.route('/attendance')
 def student_attendance_list():
     present_students = []
-    
     today_str = date.today().strftime("%Y-%m-%d")
+    
+    conn = get_db_connection()
+    if not conn:
+        return render_template('student_list.html', students=[], error="Could not connect to the attendance database.")
 
     try:
-        if not os.path.exists("attendance.csv"):
-            return render_template('student_list.html', students=[], error="Attendance record file not found.")
-
-        df = pd.read_csv('attendance.csv')
+        cursor = conn.cursor(dictionary=True) # Use dictionary cursor
         
-        if df.empty:
-            return render_template('student_list.html', students=[], error="No attendance records yet for today.")
-
-        # --- FIX TO PREVENT CRASH ---
-        # We drop duplicates by 'Name' because 'ID' is not in the CSV
-        present_df = df[df['Date'] == today_str].drop_duplicates(subset=['Name'])
-
-        # --- CODE THAT PRODUCES THE SCREENSHOT ---
-        # We send 'id' as 'N/A' and the 'timestamp' as the full time
-        for index, row in present_df.iterrows():
+        # Query for unique students present today, with their first seen time
+        query = """
+        SELECT name, MIN(time) as first_seen
+        FROM attendance
+        WHERE date = %s
+        GROUP BY name
+        ORDER BY name
+        """
+        cursor.execute(query, (today_str,))
+        rows = cursor.fetchall()
+        
+        for row in rows:
+            # Convert time object to a readable string
+            time_str = (datetime.min + row['first_seen']).strftime("%I:%M:%S %p")
             present_students.append({
-                'name': row.get('Name', 'N/A'),
-                'id': 'N/A', # This is where "N/A" comes from
-                'timestamp': f"{row.get('Time', 'N/A')}" # This is where "14:36:12" comes from
+                'name': row['name'],
+                'time': time_str
             })
             
-    except FileNotFoundError:
-        return render_template('student_list.html', students=[], error="Attendance records are not available.")
-    except KeyError as e:
-        # This will catch if 'Date' or 'Name' is missing
-        return render_template('student_list.html', students=[], error=f"Error reading attendance data: Missing column {e}. Please ensure attendance.csv is correctly formatted.")
-    except Exception as e:
+    except Error as e:
+        print(f"Error querying database: {e}")
         return render_template('student_list.html', students=[], error=f"An error occurred: {e}")
+    finally:
+        if conn.is_connected():
+            cursor.close()
+            conn.close()
 
-    return render_template('student_list.html', students=present_students)
+    return render_template('student_list.html', students=present_students, error=None)
 
 if __name__ == '__main__':
     # Run on 0.0.0.0 to make it accessible on your network
