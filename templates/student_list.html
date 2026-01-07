@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Live Attendance</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    
+    <style>
+        /* General Styling */
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 10px; /* Less padding on mobile */
+            background-color: #f0f2f5;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .container {
+            width: 100%;
+            max-width: 700px;
+            margin: 0 auto;
+            box-sizing: border-box;
+        }
+
+        h1 {
+            color: #1a73e8;
+            text-align: center;
+            font-size: 1.5em; /* Smaller font for mobile */
+            font-weight: 700;
+            margin-bottom: 15px;
+            margin-top: 5px;
+        }
+
+        .live-badge {
+            display: inline-block;
+            background-color: #e8f0fe;
+            color: #1a73e8;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.75em;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        .dot {
+            height: 8px;
+            width: 8px;
+            background-color: #1a73e8;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+        
+        /* Search Bar */
+        .search-bar {
+            display: flex;
+            align-items: center;
+            background-color: #ffffff;
+            border: 1px solid #dfe1e5;
+            border-radius: 24px;
+            padding: 10px 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+        }
+        .search-bar i { color: #9aa0a6; margin-right: 10px; }
+        .search-bar input {
+            flex-grow: 1;
+            border: none;
+            outline: none;
+            font-size: 16px; /* Prevents zoom on iPhone */
+            font-family: 'Inter', sans-serif;
+        }
+
+        /* List container */
+        .student-list-container {
+            background-color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            overflow: hidden;
+        }
+
+        .list-header {
+            display: flex;
+            padding: 12px 16px;
+            background-color: #f8f9fa;
+            border-bottom: 1px solid #dfe1e5;
+            font-size: 0.75em;
+            font-weight: 600;
+            color: #5f6368;
+            text-transform: uppercase;
+        }
+        .header-rank { width: 30px; text-align: center; }
+        .header-profile { flex-grow: 1; margin-left: 10px; }
+
+        .student-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px; /* Tighter padding for mobile */
+            border-bottom: 1px solid #f0f2f5;
+        }
+        .student-item:last-child { border-bottom: none; }
+
+        .student-rank {
+            font-size: 1em;
+            font-weight: 600;
+            color: #5f6368;
+            width: 30px;
+            text-align: center;
+        }
+
+        .student-avatar {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            margin-left: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #FFFFFF;
+        }
+        .avatar-color-1 { background-color: #1a73e8; } 
+        .avatar-color-2 { background-color: #e84235; } 
+        .avatar-color-3 { background-color: #fbbc04; } 
+        .avatar-color-4 { background-color: #34a853; } 
+        .avatar-color-5 { background-color: #9c27b0; } 
+
+        .student-info { flex-grow: 1; margin-left: 12px; }
+        .student-info h3 { margin: 0; color: #202124; font-size: 1em; }
+        .student-info p { margin: 2px 0 0 0; color: #5f6368; font-size: 0.85em; }
+        
+        .no-students { text-align: center; color: #5f6368; padding: 30px; }
+
+        /* MOBILE TWEAKS */
+        @media (max-width: 480px) {
+            body { padding: 5px; background: #fff; } /* White background on phone looks cleaner */
+            .container { padding: 0; }
+            .student-list-container { box-shadow: none; border-radius: 0; }
+            h1 { font-size: 1.3em; margin-top: 15px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div style="text-align: center; margin-top: 10px;">
+            <div class="live-badge"><span class="dot"></span>LIVE</div>
+        </div>
+        <h1>Class Attendance</h1>
+
+        <div class="search-bar">
+            <i class="fas fa-search"></i>
+            <input type="text" id="searchInput" onkeyup="filterStudents()" placeholder="Filter students...">
+        </div>
+
+        <div class="student-list-container">
+            <div class="list-header">
+                <span class="header-rank">#</span>
+                <span class="header-profile">Student List</span>
+            </div>
+
+            <div id="studentList">
+                {% if students %}
+                    {% for student in students %}
+                    <div class="student-item">
+                        <span class="student-rank">{{ loop.index }}</span>
+                        <div class="student-avatar avatar-color-{{ (loop.index0 % 5) + 1 }}">
+                            {{ student.name[0] | upper }}
+                        </div>
+                        <div class="student-info">
+                            <h3>{{ student.name }}</h3>
+                            <p><i class="far fa-clock"></i> {{ student.time }}</p>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="no-students">
+                        <i class="fas fa-user-clock" style="font-size: 2em; margin-bottom: 10px; color: #dfe1e5;"></i>
+                        <p>Waiting for students...</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function filterStudents() {
+            var input = document.getElementById('searchInput');
+            var filter = input.value.toUpperCase();
+            var list = document.getElementById('studentList');
+            var items = list.getElementsByClassName('student-item');
+
+            for (var i = 0; i < items.length; i++) {
+                var nameTag = items[i].getElementsByTagName('h3')[0];
+                if (nameTag) {
+                    var txtValue = nameTag.textContent || nameTag.innerText;
+                    if (txtValue.toUpperCase().indexOf(filter) > -1) {
+                        items[i].style.display = "flex";
+                    } else {
+                        items[i].style.display = "none";
+                    }
+                }
+            }
+        }
+
+        setInterval(function() {
+            var searchInput = document.getElementById('searchInput');
+            if (searchInput.value === "") { location.reload(); }
+        }, 5000);
+    </script>
+</body>
+</html>
