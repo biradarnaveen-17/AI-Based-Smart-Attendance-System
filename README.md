@@ -142,8 +142,8 @@ The complete detailed project report (including architecture, methodology, resul
 https://drive.google.com/file/d/1Z2tfyA-t5nVErGVqM_pWGP-8meO7AOIk/view?usp=drive_link
 
 ---
-
-
+If you encounter any difficulties or have questions regarding this project, please feel free to reach out to us through LinkedIn or Gmail.
+---
 
 ## 👨‍💻 Developed By
 - **Mr. Naveen Biradar**  
