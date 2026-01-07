@@ -120,3 +120,42 @@ The system detects student faces using a webcam and automatically records attend
 ---
 
 ## 📂 Project Structure
+---
+Online_Notice_Board/
+│
+├── static/
+│ └── uploads/
+├── templates/
+│ ├── admin/
+│ └── index.html
+├── app.py
+├── database.db
+├── requirements.txt
+└── README.md
+
+---
+
+## 📄 Project Report
+The complete detailed project report (including architecture, methodology, results, and references) can be accessed using the link below:
+
+🔗 **Full Project Report (PDF):**  
+https://drive.google.com/file/d/1Z2tfyA-t5nVErGVqM_pWGP-8meO7AOIk/view?usp=drive_link
+
+---
+
+
+
+## 👨‍💻 Developed By
+- **Mr. Naveen Biradar**  
+- **Mr. Pavan CV**  
+- **Mr. Rajendraprasad CL**  
+- **Mr. Pranav Adithya SK**  
+
+**Department of Information Science & Engineering**  
+**BMS Institute of Technology & Management**  
+Academic Year: **2025–26**
+
+---
+
+## 📜 License
+This project is developed for **academic purposes only**.
